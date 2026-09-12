@@ -295,3 +295,92 @@ export function formatCombinedAnalysis(
 
   return lines.join("\n");
 }
+
+/**
+ * Renders a combined image-and-links analysis as a single WhatsApp reply.
+ *
+ * Links affect the fraud section only. AI-image suspicion is reproduced exactly
+ * as the image analyzer reported it: a deceptive link says nothing about
+ * whether the picture was generated, and vice versa.
+ *
+ * With no links, the output matches the image-only reply.
+ */
+export function formatCombinedImageAnalysis(
+  imageResult: ImageAnalysisResult,
+  outcomes: UrlOutcome[],
+): string {
+  if (outcomes.length === 0) {
+    return formatImageAnalysis(imageResult);
+  }
+
+  const { risk, score, scamType } = imageResult.fraud;
+  const { aiSuspicion, score: aiScore } = imageResult.authenticity;
+
+  // Links raise the fraud picture only; authenticity is passed through.
+  const overallFraud = combineRisk(risk, outcomes);
+
+  const lines: string[] = [TITLE, "", "Fraud risk", RISK_HEADERS[overallFraud]];
+
+  if (risk === "low") {
+    lines.push("No obvious scam pattern in the image itself.");
+  } else {
+    lines.push(
+      `Image risk score: ${score}/100`,
+      "",
+      "Possible scam:",
+      SCAM_TYPE_LABELS[scamType],
+    );
+
+    const signals = imageResult.signals.slice(0, MAX_SIGNALS);
+    if (signals.length > 0) {
+      lines.push("", "Why:");
+      for (const signal of signals) {
+        lines.push(`• ${signal}`);
+      }
+    }
+  }
+
+  lines.push("", "Links found in this image:");
+  for (const outcome of outcomes) {
+    if (outcome.status === "failed") {
+      lines.push(`🔗 ${displayUrl(outcome.url)}`);
+      lines.push("⚪ Could not fully verify this link");
+      continue;
+    }
+
+    const { url, verdict, riskScore, reasons } = outcome.result;
+
+    lines.push(`🔗 ${displayUrl(url)}`);
+    lines.push(`${URL_VERDICT_LABELS[verdict]} (${riskScore}/100)`);
+
+    for (const reason of reasons.slice(0, MAX_URL_REASONS)) {
+      lines.push(`• ${reason}`);
+    }
+  }
+
+  lines.push("", "AI image suspicion", AI_SUSPICION_HEADERS[aiSuspicion]);
+
+  if (aiScore === null) {
+    lines.push("Not enough visual evidence to score.");
+  } else {
+    lines.push(`Suspicion score: ${aiScore}/100`);
+  }
+
+  const action = imageResult.recommendedAction.trim();
+  if (overallFraud === "low") {
+    lines.push(
+      "",
+      action ||
+        "Still verify unexpected requests before sending money or sharing private information.",
+    );
+  } else {
+    lines.push(
+      "",
+      "What to do:",
+      action ||
+        "Do not open the link or act on this image until you can verify it independently.",
+    );
+  }
+
+  return lines.join("\n");
+}

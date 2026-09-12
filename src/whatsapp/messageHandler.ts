@@ -11,7 +11,7 @@ import { analyzeText } from "../analyzers/textAnalyzer.js";
 import {
   ANALYSIS_UNAVAILABLE_MESSAGE,
   formatCombinedAnalysis,
-  formatImageAnalysis,
+  formatCombinedImageAnalysis,
   IMAGE_ANALYSIS_UNAVAILABLE_MESSAGE,
   type UrlOutcome,
 } from "../risk/formatter.js";
@@ -205,7 +205,15 @@ async function analyzeImageAndReply(
 
   try {
     const result = await analyzeImage(filePath);
-    reply = formatImageAnalysis(result);
+
+    // Links come from the text the image analyzer already read, so no second
+    // vision call and no separate OCR pass is needed.
+    const urls = extractUrls(result.extractedText).slice(
+      0,
+      MAX_URLS_PER_MESSAGE,
+    );
+
+    reply = formatCombinedImageAnalysis(result, await analyzeUrls(urls));
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     console.error("[IMAGE ANALYSIS ERROR]");

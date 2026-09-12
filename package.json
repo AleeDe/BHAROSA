@@ -11,7 +11,8 @@
     "test:text": "tsx src/testTextAnalyzer.ts",
     "test:image": "tsx src/testImageAnalyzer.ts",
     "test:url": "tsx src/testUrlAnalyzer.ts",
-    "test:combined": "tsx src/testCombinedAnalysis.ts"
+    "test:combined": "tsx src/testCombinedAnalysis.ts",
+    "test:imageurl": "tsx src/testImageUrlAnalysis.ts"
   },
   "type": "module",
   "dependencies": {
