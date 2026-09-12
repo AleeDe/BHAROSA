@@ -52,3 +52,18 @@ export function getGroqVisionModel(): string {
 export function getGroqTextModel(): string {
   return process.env.GROQ_TEXT_MODEL?.trim() || DEFAULT_GROQ_TEXT_MODEL;
 }
+
+/**
+ * Returns the VirusTotal API key, or `undefined` when none is configured.
+ *
+ * URL reputation is optional: the analyzer falls back to local rules without a
+ * key, so this returns `undefined` rather than throwing. `WEB_RISK_API_KEY` is
+ * accepted as a compatibility fallback for the original implementation.
+ */
+export function getVirusTotalApiKey(): string | undefined {
+  return (
+    process.env.VIRUSTOTAL_API_KEY?.trim() ||
+    process.env.WEB_RISK_API_KEY?.trim() ||
+    undefined
+  );
+}

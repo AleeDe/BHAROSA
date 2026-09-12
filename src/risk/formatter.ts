@@ -5,6 +5,7 @@ import type {
   ScamType,
   TextAnalysisResult,
 } from "../types/analysis.js";
+import type { URLAnalysisResult, URLVerdict } from "../types/url.types.js";
 
 /** Most signals to show, so replies stay short on a phone screen. */
 const MAX_SIGNALS = 3;
@@ -155,6 +156,141 @@ export function formatImageAnalysis(result: ImageAnalysisResult): string {
     lines.push("Not enough visual evidence to score.");
   } else {
     lines.push(`Suspicion score: ${aiScore}/100`);
+  }
+
+  return lines.join("\n");
+}
+
+/** Maps a URL verdict onto the risk scale used for the overall reply. */
+const URL_VERDICT_RISK: Record<URLVerdict, RiskLevel> = {
+  safe: "low",
+  suspicious: "medium",
+  dangerous: "high",
+};
+
+/** Short status line shown for each analyzed link. */
+const URL_VERDICT_LABELS: Record<URLVerdict, string> = {
+  safe: "🟢 Link appears low risk",
+  suspicious: "🟡 Suspicious link",
+  dangerous: "🔴 High-risk link",
+};
+
+/** Ranking used to pick the most severe risk across components. */
+const RISK_ORDER: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
+
+/** Most reasons shown per link, so the reply stays readable on a phone. */
+const MAX_URL_REASONS = 2;
+
+/** One link's outcome: either an analysis, or the URL that could not be checked. */
+export type UrlOutcome =
+  | { status: "ok"; result: URLAnalysisResult }
+  | { status: "failed"; url: string };
+
+/**
+ * Returns the more severe of two risk levels.
+ *
+ * Used instead of averaging: text and URL scores are produced by unrelated
+ * scales, so the higher risk wins rather than being diluted by the other.
+ */
+function maxRisk(a: RiskLevel, b: RiskLevel): RiskLevel {
+  return RISK_ORDER[a] >= RISK_ORDER[b] ? a : b;
+}
+
+/**
+ * Computes the overall risk for a message from its text and link results.
+ *
+ * Links that could not be analyzed are ignored: a failed lookup is missing
+ * evidence, not evidence of danger.
+ */
+export function combineRisk(
+  textRisk: RiskLevel,
+  outcomes: UrlOutcome[],
+): RiskLevel {
+  let risk = textRisk;
+
+  for (const outcome of outcomes) {
+    if (outcome.status === "ok") {
+      risk = maxRisk(risk, URL_VERDICT_RISK[outcome.result.verdict]);
+    }
+  }
+
+  return risk;
+}
+
+/** Shortens a URL for display so long links do not dominate the reply. */
+function displayUrl(url: string): string {
+  const trimmed = url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+  return trimmed.length > 60 ? `${trimmed.slice(0, 57)}...` : trimmed;
+}
+
+/**
+ * Renders a combined text-and-links analysis as a single WhatsApp reply.
+ *
+ * The overall heading reflects the most severe component, while the message and
+ * link findings keep their own scores: the two analyzers are not calibrated
+ * against each other, so their numbers are never merged.
+ *
+ * With no links, the output matches the text-only reply.
+ */
+export function formatCombinedAnalysis(
+  textResult: TextAnalysisResult,
+  outcomes: UrlOutcome[],
+): string {
+  if (outcomes.length === 0) {
+    return formatTextAnalysis(textResult);
+  }
+
+  const overall = combineRisk(textResult.fraud.risk, outcomes);
+
+  const lines: string[] = [TITLE, "", RISK_HEADERS[overall], ""];
+
+  lines.push("Message:");
+  if (textResult.fraud.risk === "low") {
+    lines.push("🟢 No obvious scam pattern detected.");
+  } else {
+    lines.push(
+      `${RISK_HEADERS[textResult.fraud.risk]} — ${SCAM_TYPE_LABELS[textResult.fraud.scamType]}`,
+      `Risk score: ${textResult.fraud.score}/100`,
+    );
+
+    const signals = textResult.signals.slice(0, MAX_SIGNALS);
+    for (const signal of signals) {
+      lines.push(`• ${signal}`);
+    }
+  }
+
+  lines.push("", "Links:");
+  for (const outcome of outcomes) {
+    if (outcome.status === "failed") {
+      lines.push(`🔗 ${displayUrl(outcome.url)}`);
+      lines.push("⚪ Could not fully verify this link");
+      continue;
+    }
+
+    const { url, verdict, riskScore, reasons } = outcome.result;
+
+    lines.push(`🔗 ${displayUrl(url)}`);
+    lines.push(`${URL_VERDICT_LABELS[verdict]} (${riskScore}/100)`);
+
+    for (const reason of reasons.slice(0, MAX_URL_REASONS)) {
+      lines.push(`• ${reason}`);
+    }
+  }
+
+  const action = textResult.recommendedAction.trim();
+  if (overall === "low") {
+    lines.push(
+      "",
+      action ||
+        "Still verify unexpected requests before sending money or sharing private information.",
+    );
+  } else {
+    lines.push(
+      "",
+      "What to do:",
+      action ||
+        "Do not open the link or act on this message until you can verify it independently.",
+    );
   }
 
   return lines.join("\n");

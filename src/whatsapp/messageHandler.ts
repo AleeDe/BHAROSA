@@ -10,12 +10,18 @@ import { analyzeImage } from "../analyzers/imageAnalyzer.js";
 import { analyzeText } from "../analyzers/textAnalyzer.js";
 import {
   ANALYSIS_UNAVAILABLE_MESSAGE,
+  formatCombinedAnalysis,
   formatImageAnalysis,
-  formatTextAnalysis,
   IMAGE_ANALYSIS_UNAVAILABLE_MESSAGE,
+  type UrlOutcome,
 } from "../risk/formatter.js";
+import { analyzeUrl } from "../services/url.service.js";
+import { extractUrls } from "../utils/extractUrls.js";
 import type { IncomingMessage } from "../types/message.js";
 import { saveImageMessage } from "./media.js";
+
+/** Cap on links analyzed per message, so one message cannot fan out. */
+const MAX_URLS_PER_MESSAGE = 3;
 
 /** Pseudo-chat WhatsApp uses for status updates; never worth processing. */
 const STATUS_BROADCAST = "status@broadcast";
@@ -126,6 +132,27 @@ function logMessage(
 }
 
 /**
+ * Analyzes the links found in a message.
+ *
+ * Each link is settled independently, so one failing lookup neither aborts the
+ * others nor prevents a reply. A link that could not be checked is reported as
+ * unverified rather than treated as dangerous.
+ */
+async function analyzeUrls(urls: string[]): Promise<UrlOutcome[]> {
+  if (urls.length === 0) {
+    return [];
+  }
+
+  const settled = await Promise.allSettled(urls.map((url) => analyzeUrl(url)));
+
+  return settled.map((outcome, index) =>
+    outcome.status === "fulfilled"
+      ? { status: "ok", result: outcome.value }
+      : { status: "failed", url: urls[index]! },
+  );
+}
+
+/**
  * Analyzes a message and replies to the chat it came from.
  *
  * Exactly one analysis and one reply per message. Analyzer failures are
@@ -140,8 +167,16 @@ async function analyzeAndReply(
   let reply: string;
 
   try {
-    const result = await analyzeText(text);
-    reply = formatTextAnalysis(result);
+    // Links are analyzed alongside the text, never instead of it: a message can
+    // be a scam with a harmless link, or benign-sounding with a deceptive one.
+    const urls = extractUrls(text).slice(0, MAX_URLS_PER_MESSAGE);
+
+    const [result, outcomes] = await Promise.all([
+      analyzeText(text),
+      analyzeUrls(urls),
+    ]);
+
+    reply = formatCombinedAnalysis(result, outcomes);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     console.error("[ANALYSIS ERROR]");
